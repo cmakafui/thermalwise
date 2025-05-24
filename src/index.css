@@ -74,6 +74,9 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+  --dialog-background: hsl(0 0% 100%);
+  --dialog-foreground: hsl(222 18% 11%);
+  --dialog-border: hsl(214 32% 91%);
 }
 
 .dark {
@@ -108,6 +111,9 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
+  --dialog-background: hsl(222 47% 11%);
+  --dialog-foreground: hsl(213 31% 91%);
+  --dialog-border: hsl(222 47% 19%);
 }
 
 @layer base {
@@ -117,4 +123,64 @@
   body {
     @apply bg-background text-foreground;
   }
+}
+
+/* Add to the end of your existing index.css file */
+
+/* Fix modal positioning and visibility issues */
+[data-radix-popper-content-wrapper] {
+  z-index: 50 !important;
+}
+
+/* Ensure dialogs appear properly */
+[data-state="open"][data-side] {
+  z-index: 50 !important;
+}
+
+/* Fix dialog overlay */
+.fixed.inset-0[data-state="open"] {
+  z-index: 50 !important;
+  background-color: rgba(0, 0, 0, 0.8) !important;
+  backdrop-filter: blur(4px);
+}
+
+/* Fix dialog content positioning */
+.fixed.left-1\/2.top-1\/2 {
+  z-index: 51 !important;
+  transform: translate(-50%, -50%) !important;
+  max-height: 85vh !important;
+  overflow-y: auto !important;
+}
+
+/* Improve modal contrast in both themes */
+:root {
+  --dialog-background: hsl(0 0% 100%);
+  --dialog-foreground: hsl(222 18% 11%);
+  --dialog-border: hsl(214 32% 91%);
+}
+
+.dark {
+  --dialog-background: hsl(222 47% 11%);
+  --dialog-foreground: hsl(213 31% 91%);
+  --dialog-border: hsl(222 47% 19%);
+}
+
+/* Apply better styling to dialog content */
+[role="dialog"] {
+  background-color: var(--dialog-background) !important;
+  color: var(--dialog-foreground) !important;
+  border: 1px solid var(--dialog-border) !important;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25) !important;
+}
+
+/* Fix focus visibility */
+[role="dialog"]:focus-visible {
+  outline: 2px solid hsl(217 91% 60%) !important;
+  outline-offset: 2px !important;
+}
+
+/* Ensure buttons in modals are visible */
+[role="dialog"] button {
+  z-index: 1 !important;
+  position: relative !important;
 }

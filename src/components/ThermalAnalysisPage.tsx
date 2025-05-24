@@ -1,8 +1,7 @@
-// src/components/ThermalAnalysisPage.tsx
+// src/components/ThermalAnalysisPage.tsx - Enhanced state management
 import { useParams, Link, useNavigate } from "@tanstack/react-router";
 import { useState, useEffect } from "react";
 import { useThermalAnalysis } from "@/hooks/useThermalAnalysis";
-import ReactMarkdown from "react-markdown";
 import {
   ArrowLeft,
   RefreshCw,
@@ -17,14 +16,15 @@ import {
   AlertCircle,
   FileText,
   Eye,
-  Download,
   TrendingUp,
-  Euro,
+  TrendingDown,
   Calendar,
   MapPin,
   Wifi,
   WifiOff,
   Loader2,
+  Shield,
+  RotateCcw,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -46,6 +46,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Progress } from "@/components/ui/progress";
+import { ThermalReport } from "@/components/ThermalReport";
+import { ApprovalCard } from "@/components/ApprovalModal";
 
 const fadeInAnimation = "animate-in fade-in-50 duration-500";
 const slideUpAnimation = "animate-in slide-in-from-bottom-5 duration-500";
@@ -67,7 +69,37 @@ const severityColors = {
   severe: "bg-red-100 text-red-800 border-red-200",
 };
 
-// Add type for anomaly
+// Types (keeping your existing types)
+interface ApprovalContext {
+  imagePairCount?: number;
+  buildingName?: string;
+  estimatedCost?: string;
+  estimatedTime?: string;
+  location?: string;
+  severeCount?: number;
+  anomalies?: Array<{
+    location: string;
+    description: string;
+  }>;
+  anomalyCount?: number;
+  reportType?: string;
+}
+
+interface PendingApproval {
+  id: string;
+  type: string;
+  title: string;
+  description: string;
+  context: ApprovalContext;
+  timestamp: number;
+}
+
+interface ApprovalDecision {
+  approvalId: string;
+  approved: boolean;
+  reason?: string;
+}
+
 interface Anomaly {
   id: string;
   location: string;
@@ -98,10 +130,18 @@ export function ThermalAnalysisPage() {
     stopAnalysis,
     getDetectedAnomalies,
     refreshData,
+    agent,
   } = useThermalAnalysis(analysisId);
 
   const [copied, setCopied] = useState(false);
   const [detectedAnomalies, setDetectedAnomalies] = useState<Anomaly[]>([]);
+  const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>(
+    []
+  );
+  const [processingApproval, setProcessingApproval] = useState<string | null>(
+    null
+  );
+  const [isRestarting, setIsRestarting] = useState(false);
 
   // Copy URL to clipboard
   const copyToClipboard = () => {
@@ -121,6 +161,23 @@ export function ThermalAnalysisPage() {
     }
   };
 
+  // Handle restarting analysis
+  const handleRestartAnalysis = async () => {
+    if (!agent || !isConnected) return;
+
+    setIsRestarting(true);
+    try {
+      await agent.call("restartAnalysis", []);
+      setDetectedAnomalies([]);
+      setPendingApprovals([]);
+      console.log("Analysis restarted successfully");
+    } catch (err) {
+      console.error("Failed to restart analysis:", err);
+    } finally {
+      setIsRestarting(false);
+    }
+  };
+
   // Handle refresh
   const handleRefresh = async () => {
     try {
@@ -130,9 +187,50 @@ export function ThermalAnalysisPage() {
     }
   };
 
-  // Load anomalies when analysis completes
+  // Fetch pending approvals when analysis state changes
   useEffect(() => {
-    if (analysisState?.status === "completed") {
+    if (analysisState?.status === "awaiting_approval" && isConnected && agent) {
+      const fetchApprovals = async () => {
+        try {
+          const approvals = await agent.call<PendingApproval[]>(
+            "getPendingApprovals",
+            []
+          );
+          setPendingApprovals(approvals);
+        } catch (err) {
+          console.error("Failed to fetch pending approvals:", err);
+        }
+      };
+      fetchApprovals();
+    } else {
+      setPendingApprovals([]);
+    }
+  }, [analysisState?.status, isConnected, agent]);
+
+  // Handle approval decisions
+  const handleApprovalDecision = async (decision: ApprovalDecision) => {
+    if (!agent || !isConnected) return;
+
+    setProcessingApproval(decision.approvalId);
+
+    try {
+      await agent.call("provideApproval", [decision]);
+      setPendingApprovals((prev) =>
+        prev.filter((a) => a.id !== decision.approvalId)
+      );
+    } catch (err) {
+      console.error("Failed to send approval decision:", err);
+    } finally {
+      setProcessingApproval(null);
+    }
+  };
+
+  // Load anomalies when analysis completes or stops
+  useEffect(() => {
+    if (
+      analysisState?.status === "completed" ||
+      analysisState?.status === "stopped"
+    ) {
       getDetectedAnomalies().then(setDetectedAnomalies).catch(console.error);
     }
   }, [analysisState?.status, getDetectedAnomalies]);
@@ -155,13 +253,11 @@ export function ThermalAnalysisPage() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Loader2 className="h-5 w-5 animate-spin text-primary" />
-              {!isConnected
-                ? "Connecting to Analysis Engine..."
-                : "Initializing Analysis..."}
+              {!isConnected ? "Connecting..." : "Initializing..."}
             </CardTitle>
             <CardDescription>
               {!isConnected
-                ? "Establishing secure connection to thermal analysis service"
+                ? "Establishing connection to thermal analysis service"
                 : "Loading analysis data and preparing interface"}
             </CardDescription>
           </CardHeader>
@@ -175,14 +271,9 @@ export function ThermalAnalysisPage() {
                     <Wifi className="h-8 w-8 text-primary animate-pulse" />
                   )}
                 </div>
-                <div>
-                  <p className="font-medium">
-                    {!isConnected ? "Connecting..." : "Initializing..."}
-                  </p>
-                  <p className="text-sm text-muted-foreground">
-                    This may take a few moments
-                  </p>
-                </div>
+                <p className="text-sm text-muted-foreground">
+                  This may take a few moments
+                </p>
               </div>
             </div>
           </CardContent>
@@ -210,7 +301,7 @@ export function ThermalAnalysisPage() {
           <AlertTitle>Analysis Not Found</AlertTitle>
           <AlertDescription>
             {error.message ||
-              "This analysis session was not found or has expired. Please start a new analysis."}
+              "This analysis session was not found or has expired."}
           </AlertDescription>
         </Alert>
 
@@ -267,7 +358,6 @@ export function ThermalAnalysisPage() {
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="icon" className="h-8 w-8">
                 <Share2 className="h-4 w-4" />
-                <span className="sr-only">Share</span>
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
@@ -283,6 +373,32 @@ export function ThermalAnalysisPage() {
           </DropdownMenu>
         </div>
       </div>
+
+      {/* Pending Approvals Section */}
+      {pendingApprovals.length > 0 && (
+        <div className="space-y-4">
+          <Alert className="border-amber-200 bg-amber-50">
+            <Shield className="h-4 w-4 text-amber-600" />
+            <AlertTitle className="text-amber-800">
+              Human Approval Required
+            </AlertTitle>
+            <AlertDescription className="text-amber-700">
+              The analysis process requires your approval to continue.
+            </AlertDescription>
+          </Alert>
+
+          <div className="grid gap-4">
+            {pendingApprovals.map((approval) => (
+              <ApprovalCard
+                key={approval.id}
+                approval={approval}
+                onDecision={handleApprovalDecision}
+                isProcessing={processingApproval === approval.id}
+              />
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Error States */}
       {error && (
@@ -301,8 +417,7 @@ export function ThermalAnalysisPage() {
           <WifiOff className="h-4 w-4" />
           <AlertTitle>Connection Lost</AlertTitle>
           <AlertDescription>
-            The connection to the analysis engine was lost. Some features may
-            not work properly.
+            The connection to the analysis engine was lost.
             <Button
               variant="outline"
               size="sm"
@@ -328,6 +443,13 @@ export function ThermalAnalysisPage() {
                 >
                   <Thermometer className="h-3 w-3 mr-1" />
                   Thermal Analysis
+                </Badge>
+                <Badge
+                  variant="outline"
+                  className="px-2.5 py-0.5 text-xs bg-green-50 border-green-200 text-green-700"
+                >
+                  <Shield className="h-3 w-3 mr-1" />
+                  Human Oversight
                 </Badge>
                 {analysisState?.energyRating && (
                   <Badge
@@ -383,6 +505,12 @@ export function ThermalAnalysisPage() {
                   Analyzing...
                 </div>
               )}
+              {analysisState?.status === "awaiting_approval" && (
+                <div className="flex items-center gap-2 text-sm text-amber-600">
+                  <Shield className="h-4 w-4" />
+                  Awaiting Approval
+                </div>
+              )}
               {analysisState?.status === "error" && (
                 <div className="flex items-center gap-2 text-sm text-red-600">
                   <AlertCircle className="h-4 w-4" />
@@ -409,6 +537,12 @@ export function ThermalAnalysisPage() {
                 <span className="flex items-center gap-1">
                   <Thermometer className="h-3 w-3" />
                   {detectedAnomalies.length} anomalies detected
+                </span>
+              )}
+              {pendingApprovals.length > 0 && (
+                <span className="flex items-center gap-1">
+                  <Shield className="h-3 w-3" />
+                  {pendingApprovals.length} pending approvals
                 </span>
               )}
             </div>
@@ -447,6 +581,13 @@ export function ThermalAnalysisPage() {
                   <CardTitle className="flex items-center gap-2 text-lg">
                     <Zap className="h-5 w-5 text-primary" />
                     Thermal Image Analysis
+                    <Badge
+                      variant="outline"
+                      className="ml-2 text-xs bg-green-50 border-green-200 text-green-700"
+                    >
+                      <Shield className="h-3 w-3 mr-1" />
+                      Human Supervised
+                    </Badge>
                   </CardTitle>
                   <CardDescription>
                     AI-powered analysis of {imagePairs.length} thermal image
@@ -454,46 +595,68 @@ export function ThermalAnalysisPage() {
                   </CardDescription>
                 </div>
 
-                {/* Action Buttons */}
-                {analysisState?.status === "idle" && (
-                  <Button
-                    onClick={handleStartAnalysis}
-                    className="h-9"
-                    disabled={!isConnected}
-                  >
-                    <Zap className="h-4 w-4 mr-2" />
-                    Start Analysis
-                  </Button>
-                )}
+                {/* Action Buttons - Enhanced */}
+                <div className="flex gap-2">
+                  {analysisState?.status === "idle" && (
+                    <Button
+                      onClick={handleStartAnalysis}
+                      className="h-9"
+                      disabled={!isConnected}
+                    >
+                      <Zap className="h-4 w-4 mr-2" />
+                      Start Analysis
+                    </Button>
+                  )}
 
-                {analysisState?.status === "completed" && (
-                  <Button
-                    variant="outline"
-                    onClick={handleStartAnalysis}
-                    className="h-9"
-                    disabled={!isConnected}
-                  >
-                    <RefreshCw className="h-4 w-4 mr-2" />
-                    Re-analyze
-                  </Button>
-                )}
+                  {(analysisState?.status === "completed" ||
+                    analysisState?.status === "stopped") && (
+                    <Button
+                      variant="outline"
+                      onClick={handleRestartAnalysis}
+                      className="h-9"
+                      disabled={!isConnected || isRestarting}
+                    >
+                      {isRestarting ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <RotateCcw className="h-4 w-4 mr-2" />
+                      )}
+                      {analysisState?.status === "stopped"
+                        ? "Restart Analysis"
+                        : "Re-analyze"}
+                    </Button>
+                  )}
 
-                {isAnalyzing && (
-                  <Button
-                    variant="destructive"
-                    onClick={stopAnalysis}
-                    className="h-9"
-                    disabled={!isConnected}
-                  >
-                    <StopCircle className="h-4 w-4 mr-2" />
-                    Stop Analysis
-                  </Button>
-                )}
+                  {isAnalyzing && (
+                    <Button
+                      variant="destructive"
+                      onClick={stopAnalysis}
+                      className="h-9"
+                      disabled={!isConnected}
+                    >
+                      <StopCircle className="h-4 w-4 mr-2" />
+                      Stop Analysis
+                    </Button>
+                  )}
+                </div>
               </div>
             </CardHeader>
             <Separator />
 
             <CardContent className="pt-6">
+              {/* Analysis States */}
+              {analysisState?.status === "awaiting_approval" && (
+                <div className="text-center py-8">
+                  <Shield className="h-12 w-12 text-amber-500 mx-auto mb-4" />
+                  <h3 className="text-lg font-medium mb-2">
+                    Waiting for Your Approval
+                  </h3>
+                  <p className="text-muted-foreground">
+                    Please review and approve the pending requests above.
+                  </p>
+                </div>
+              )}
+
               {/* Analysis Progress */}
               {isAnalyzing && analysisState && (
                 <div className="space-y-6">
@@ -540,7 +703,7 @@ export function ThermalAnalysisPage() {
                 </div>
               )}
 
-              {/* Completed Analysis */}
+              {/* Completed State */}
               {analysisState?.status === "completed" && (
                 <div className="space-y-6">
                   <div className="flex items-center gap-4">
@@ -549,7 +712,6 @@ export function ThermalAnalysisPage() {
                       <h3 className="text-lg font-medium">Analysis Complete</h3>
                       <p className="text-muted-foreground">
                         Found {detectedAnomalies.length} thermal anomalies
-                        across {imagePairs.length} image pairs
                       </p>
                     </div>
                   </div>
@@ -590,7 +752,12 @@ export function ThermalAnalysisPage() {
 
                     <Card className="p-4">
                       <div className="flex items-center gap-2">
-                        <Euro className="h-4 w-4 text-primary" />
+                        {analysisState.energyRating &&
+                        ["A", "B", "C"].includes(analysisState.energyRating) ? (
+                          <TrendingUp className="h-4 w-4 text-green-500" />
+                        ) : (
+                          <TrendingDown className="h-4 w-4 text-red-500" />
+                        )}
                         <div>
                           <div className="text-2xl font-bold">
                             {analysisState.energyRating || "D"}
@@ -618,7 +785,7 @@ export function ThermalAnalysisPage() {
                             %
                           </div>
                           <div className="text-xs text-muted-foreground">
-                            Avg Confidence
+                            Confidence
                           </div>
                         </div>
                       </div>
@@ -627,40 +794,56 @@ export function ThermalAnalysisPage() {
                 </div>
               )}
 
-              {/* Error State */}
-              {analysisState?.status === "error" && (
-                <div className="flex flex-col items-center justify-center py-12 text-center">
-                  <AlertCircle className="h-12 w-12 text-red-500 mb-4" />
-                  <h3 className="text-lg font-medium mb-2">Analysis Failed</h3>
-                  <p className="text-muted-foreground max-w-md mb-4">
-                    There was an error analyzing your thermal images. Please try
-                    again.
-                  </p>
-                  {analysisState.error && (
-                    <Alert variant="destructive" className="mb-4 max-w-md">
-                      <AlertDescription>{analysisState.error}</AlertDescription>
-                    </Alert>
-                  )}
-                  <Button onClick={handleStartAnalysis} disabled={!isConnected}>
-                    <RefreshCw className="h-4 w-4 mr-2" />
-                    Try Again
-                  </Button>
-                </div>
-              )}
-
               {/* Stopped State */}
               {analysisState?.status === "stopped" && (
-                <div className="flex flex-col items-center justify-center py-12 text-center">
-                  <StopCircle className="h-12 w-12 text-orange-500 mb-4" />
-                  <h3 className="text-lg font-medium mb-2">Analysis Stopped</h3>
-                  <p className="text-muted-foreground max-w-md mb-4">
-                    The analysis was stopped. You can resume or start a new
-                    analysis.
-                  </p>
-                  <Button onClick={handleStartAnalysis} disabled={!isConnected}>
-                    <Zap className="h-4 w-4 mr-2" />
-                    Resume Analysis
-                  </Button>
+                <div className="space-y-6">
+                  <div className="flex items-center gap-4">
+                    <StopCircle className="h-8 w-8 text-orange-500" />
+                    <div>
+                      <h3 className="text-lg font-medium">Analysis Stopped</h3>
+                      <p className="text-muted-foreground">
+                        Analysis was stopped.{" "}
+                        {detectedAnomalies.length > 0 &&
+                          `Found ${detectedAnomalies.length} anomalies so far.`}
+                      </p>
+                    </div>
+                  </div>
+
+                  {detectedAnomalies.length > 0 && (
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      <Card className="p-4">
+                        <div className="flex items-center gap-2">
+                          <Thermometer className="h-4 w-4 text-primary" />
+                          <div>
+                            <div className="text-2xl font-bold">
+                              {detectedAnomalies.length}
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              Found So Far
+                            </div>
+                          </div>
+                        </div>
+                      </Card>
+
+                      <Card className="p-4">
+                        <div className="flex items-center gap-2">
+                          <AlertCircle className="h-4 w-4 text-red-500" />
+                          <div>
+                            <div className="text-2xl font-bold">
+                              {
+                                detectedAnomalies.filter(
+                                  (a) => a.severity === "severe"
+                                ).length
+                              }
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              Severe
+                            </div>
+                          </div>
+                        </div>
+                      </Card>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -671,13 +854,33 @@ export function ThermalAnalysisPage() {
                   <h3 className="text-lg font-medium mb-2">Ready to Analyze</h3>
                   <p className="text-muted-foreground max-w-md mb-4">
                     Click the button above to start analyzing your{" "}
-                    {imagePairs.length} thermal image pairs with AI.
+                    {imagePairs.length} thermal image pairs with human
+                    oversight.
                   </p>
-                  {!isConnected && (
-                    <p className="text-sm text-red-600 mb-4">
-                      ⚠️ Connection required to start analysis
-                    </p>
-                  )}
+                </div>
+              )}
+
+              {/* Error State */}
+              {analysisState?.status === "error" && (
+                <div className="flex flex-col items-center justify-center py-12 text-center">
+                  <AlertCircle className="h-12 w-12 text-red-500 mb-4" />
+                  <h3 className="text-lg font-medium mb-2">Analysis Failed</h3>
+                  <p className="text-muted-foreground max-w-md mb-4">
+                    {analysisState.error ||
+                      "An error occurred during analysis."}
+                  </p>
+                  <Button
+                    variant="outline"
+                    onClick={handleRestartAnalysis}
+                    disabled={isRestarting}
+                  >
+                    {isRestarting ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <RotateCcw className="h-4 w-4 mr-2" />
+                    )}
+                    Try Again
+                  </Button>
                 </div>
               )}
             </CardContent>
@@ -720,39 +923,34 @@ export function ThermalAnalysisPage() {
                         </div>
 
                         <div className="grid md:grid-cols-2 gap-4 text-sm">
-                          <div>
-                            <div className="space-y-2">
-                              <div>
-                                <strong>Temperature Differential:</strong>{" "}
-                                {anomaly.temperatureDifferential}
-                              </div>
-                              <div>
-                                <strong>Probable Cause:</strong>{" "}
-                                {anomaly.probableCause}
-                              </div>
-                              <div>
-                                <strong>Energy Loss:</strong>{" "}
-                                {anomaly.estimatedEnergyLoss}
-                              </div>
+                          <div className="space-y-2">
+                            <div>
+                              <strong>Temperature Diff:</strong>{" "}
+                              {anomaly.temperatureDifferential}
+                            </div>
+                            <div>
+                              <strong>Probable Cause:</strong>{" "}
+                              {anomaly.probableCause}
+                            </div>
+                            <div>
+                              <strong>Energy Loss:</strong>{" "}
+                              {anomaly.estimatedEnergyLoss}
                             </div>
                           </div>
-                          <div>
-                            <div className="space-y-2">
-                              <div>
-                                <strong>Repair Cost:</strong>{" "}
-                                {anomaly.repairCost}
-                              </div>
-                              <div>
-                                <strong>Priority:</strong>{" "}
-                                {anomaly.repairPriority.toUpperCase()}
-                              </div>
-                              <div>
-                                <strong>Coordinates:</strong> [
-                                {anomaly.coordinates
-                                  .map((c: number) => c.toFixed(2))
-                                  .join(", ")}
-                                ]
-                              </div>
+                          <div className="space-y-2">
+                            <div>
+                              <strong>Repair Cost:</strong> {anomaly.repairCost}
+                            </div>
+                            <div>
+                              <strong>Priority:</strong>{" "}
+                              {anomaly.repairPriority.toUpperCase()}
+                            </div>
+                            <div>
+                              <strong>Coordinates:</strong> [
+                              {anomaly.coordinates
+                                .map((c: number) => c.toFixed(2))
+                                .join(", ")}
+                              ]
                             </div>
                           </div>
                         </div>
@@ -764,7 +962,11 @@ export function ThermalAnalysisPage() {
                 <div className="text-center py-8">
                   <Thermometer className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
                   <p className="text-muted-foreground">
-                    No anomalies detected yet. Run analysis first.
+                    {analysisState?.status === "idle"
+                      ? "No anomalies detected yet. Run analysis first."
+                      : analysisState?.status === "stopped"
+                        ? "Analysis was stopped before completion."
+                        : "No thermal anomalies detected in this building."}
                   </p>
                 </div>
               )}
@@ -774,41 +976,7 @@ export function ThermalAnalysisPage() {
 
         {/* Report Tab */}
         <TabsContent value="report" className="mt-0">
-          <Card className="border">
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle className="flex items-center gap-2">
-                    <FileText className="h-5 w-5 text-primary" />
-                    Energy Efficiency Report
-                  </CardTitle>
-                  <CardDescription>
-                    Comprehensive analysis report with recommendations
-                  </CardDescription>
-                </div>
-                {analysisState?.finalReport && (
-                  <Button variant="outline">
-                    <Download className="h-4 w-4 mr-2" />
-                    Download PDF
-                  </Button>
-                )}
-              </div>
-            </CardHeader>
-            <CardContent>
-              {analysisState?.finalReport ? (
-                <div className="prose prose-sm max-w-none">
-                  <ReactMarkdown>{analysisState.finalReport}</ReactMarkdown>
-                </div>
-              ) : (
-                <div className="text-center py-8">
-                  <FileText className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                  <p className="text-muted-foreground">
-                    Report will be generated after analysis is complete.
-                  </p>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          <ThermalReport finalReport={analysisState?.finalReport} />
         </TabsContent>
       </Tabs>
     </div>

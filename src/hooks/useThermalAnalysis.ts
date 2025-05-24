@@ -1,4 +1,4 @@
-// src/hooks/useThermalAnalysis.ts
+// src/hooks/useThermalAnalysis.ts - Updated with restart functionality
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useAgent } from "agents/react";
 
@@ -36,8 +36,40 @@ interface BuildingInfo {
   notes?: string;
 }
 
+// Human-in-the-Loop interfaces
+interface PendingApproval {
+  id: string;
+  type:
+    | "start_analysis"
+    | "anomaly_detection"
+    | "generate_report"
+    | "expensive_operation";
+  title: string;
+  description: string;
+  context: {
+    analysisId?: string;
+    anomalyId?: string;
+    operationType?: string;
+    estimatedCost?: number;
+    [key: string]: unknown;
+  };
+  timestamp: number;
+}
+
+interface ApprovalDecision {
+  approvalId: string;
+  approved: boolean;
+  reason?: string;
+}
+
 interface AnalysisState {
-  status: "idle" | "analyzing" | "completed" | "error" | "stopped";
+  status:
+    | "idle"
+    | "analyzing"
+    | "awaiting_approval"
+    | "completed"
+    | "error"
+    | "stopped";
   progress: number;
   currentImagePair?: number;
   totalImagePairs?: number;
@@ -46,6 +78,9 @@ interface AnalysisState {
   finalReport?: string;
   energyRating?: "A" | "B" | "C" | "D" | "E" | "F" | "G";
   error?: string;
+  // Human-in-the-loop additions
+  pendingApprovals: PendingApproval[];
+  approvalHistory: ApprovalDecision[];
 }
 
 interface ThermalAnalysisAgentState {
@@ -86,6 +121,12 @@ export function useThermalAnalysis(analysisId: string) {
   const [imagePairs, setImagePairs] = useState<ImagePair[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
+  const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>(
+    []
+  );
+  const [approvalHistory, setApprovalHistory] = useState<ApprovalDecision[]>(
+    []
+  );
   const hasInitialized = useRef(false);
   const initializationAttempted = useRef(false);
 
@@ -112,6 +153,10 @@ export function useThermalAnalysis(analysisId: string) {
       if (state.analysisState) {
         setAnalysisState(state.analysisState);
         setIsAnalyzing(state.analysisState.status === "analyzing");
+
+        // Update human-in-the-loop state
+        setPendingApprovals(state.analysisState.pendingApprovals || []);
+        setApprovalHistory(state.analysisState.approvalHistory || []);
       }
     },
   }) as AgentWithMethods;
@@ -288,6 +333,100 @@ export function useThermalAnalysis(analysisId: string) {
     }
   }, [agent, isConnected]);
 
+  // Restart the analysis
+  const restartAnalysis = useCallback(async (): Promise<void> => {
+    console.log(`[useThermalAnalysis] Restarting analysis`);
+
+    if (!isConnected) {
+      throw new Error("Agent not connected");
+    }
+
+    try {
+      await agent.call("restartAnalysis", []);
+      setError(null);
+      setIsAnalyzing(false);
+      console.log("[useThermalAnalysis] Analysis restarted successfully");
+    } catch (err) {
+      console.error(`[useThermalAnalysis] Failed to restart analysis:`, err);
+      throw err;
+    }
+  }, [agent, isConnected]);
+
+  // HUMAN-IN-THE-LOOP: Provide approval decision
+  const provideApproval = useCallback(
+    async (decision: ApprovalDecision): Promise<void> => {
+      console.log(
+        `[useThermalAnalysis] Providing approval decision:`,
+        decision
+      );
+
+      if (!isConnected) {
+        throw new Error("Agent not connected");
+      }
+
+      try {
+        await agent.call("provideApproval", [decision]);
+        console.log("[useThermalAnalysis] Approval decision sent successfully");
+      } catch (err) {
+        console.error(`[useThermalAnalysis] Failed to send approval:`, err);
+        throw err;
+      }
+    },
+    [agent, isConnected]
+  );
+
+  // HUMAN-IN-THE-LOOP: Get pending approvals
+  const getPendingApprovals = useCallback(async (): Promise<
+    PendingApproval[]
+  > => {
+    console.log(`[useThermalAnalysis] Getting pending approvals`);
+
+    if (!isConnected) {
+      throw new Error("Agent not connected");
+    }
+
+    try {
+      const approvals = await agent.call<PendingApproval[]>(
+        "getPendingApprovals",
+        []
+      );
+      setPendingApprovals(approvals);
+      return approvals;
+    } catch (err) {
+      console.error(
+        `[useThermalAnalysis] Failed to get pending approvals:`,
+        err
+      );
+      throw err;
+    }
+  }, [agent, isConnected]);
+
+  // HUMAN-IN-THE-LOOP: Get approval history
+  const getApprovalHistory = useCallback(async (): Promise<
+    ApprovalDecision[]
+  > => {
+    console.log(`[useThermalAnalysis] Getting approval history`);
+
+    if (!isConnected) {
+      throw new Error("Agent not connected");
+    }
+
+    try {
+      const history = await agent.call<ApprovalDecision[]>(
+        "getApprovalHistory",
+        []
+      );
+      setApprovalHistory(history);
+      return history;
+    } catch (err) {
+      console.error(
+        `[useThermalAnalysis] Failed to get approval history:`,
+        err
+      );
+      throw err;
+    }
+  }, [agent, isConnected]);
+
   // Get current analysis state
   const getAnalysisState = useCallback(async (): Promise<AnalysisState> => {
     console.log(`[useThermalAnalysis] Getting analysis state`);
@@ -395,6 +534,10 @@ export function useThermalAnalysis(analysisId: string) {
       if (agentAnalysisState) {
         setAnalysisState(agentAnalysisState);
         setIsAnalyzing(agentAnalysisState.status === "analyzing");
+
+        // Update human-in-the-loop state
+        setPendingApprovals(agentAnalysisState.pendingApprovals || []);
+        setApprovalHistory(agentAnalysisState.approvalHistory || []);
       }
 
       if (agentBuildingInfo && agentImagePairs) {
@@ -432,15 +575,26 @@ export function useThermalAnalysis(analysisId: string) {
     isAnalyzing,
     error,
 
+    // Human-in-the-loop state
+    pendingApprovals,
+    approvalHistory,
+
     // Computed state
     hasInitialized: hasInitialized.current,
     isInitialized: hasInitialized.current,
+    isAwaitingApproval: analysisState?.status === "awaiting_approval",
 
     // Actions
     initializeAnalysis,
     startAnalysis,
     stopAnalysis,
+    restartAnalysis, // NEW: Added restart functionality
     refreshData,
+
+    // Human-in-the-loop actions
+    provideApproval,
+    getPendingApprovals,
+    getApprovalHistory,
 
     // Data fetchers
     getAnalysisState,
