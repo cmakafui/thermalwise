@@ -1,14 +1,21 @@
 // worker/index.ts - Updated with UploadThing integration
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { agentsMiddleware } from "hono-agents";
 import { createRouteHandler } from "uploadthing/server";
 import { uploadRouter } from "./uploadthing";
+import { ThermalAnalysisAgent } from "./agents/thermal-analysis";
 import type { Env } from "./types";
+
+export { ThermalAnalysisAgent };
 
 const app = new Hono<{ Bindings: Env }>();
 
 // Enable CORS
 app.use("/*", cors());
+
+// Use the agents middleware
+app.use("*", agentsMiddleware());
 
 // Health check endpoint
 app.get("/api/hello", (c) => {

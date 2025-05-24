@@ -7,6 +7,7 @@
   "name": "thermalwise",
   "main": "worker/index.ts",
   "compatibility_date": "2025-05-24",
+  "compatibility_flags": ["nodejs_compat"],
   "assets": {
     "not_found_handling": "single-page-application",
   },
@@ -18,6 +19,17 @@
       "binding": "THERMALWISE_KV",
       "id": "4003c8d1a3f144daa6cb4e9c25c179cb",
     },
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "class_name": "ThermalAnalysisAgent",
+        "name": "ThermalAnalysisAgent",
+      },
+    ],
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["ThermalAnalysisAgent"] },
   ],
   /**
    * Smart Placement

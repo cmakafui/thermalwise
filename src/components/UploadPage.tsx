@@ -1,6 +1,7 @@
-// src/components/UploadPage.tsx
+// Updated src/components/UploadPage.tsx - Modified to redirect to analysis page
 import { useState } from "react";
 import { useForm } from "react-hook-form";
+import { useNavigate } from "@tanstack/react-router";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import {
@@ -45,6 +46,7 @@ import {
   Calendar,
   MapPin,
   Gauge,
+  ArrowRight,
 } from "lucide-react";
 
 // Form validation schema
@@ -84,6 +86,7 @@ export function UploadPage() {
     { id: "1", label: "Area 1", status: "pending" },
   ]);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const navigate = useNavigate();
 
   const form = useForm<BuildingFormData>({
     resolver: zodResolver(buildingFormSchema),
@@ -142,11 +145,25 @@ export function UploadPage() {
     );
 
     try {
+      // Get the area name for this pair
+      const pair = imagePairs.find((p) => p.id === pairId);
+      if (!pair) throw new Error("Image pair not found");
+
+      // Create timestamp
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+
+      // Create new filename with timestamp, area name, and type
+      const fileExtension = file.name.split(".").pop();
+      const newFileName = `${timestamp}_${pair.label.replace(/\s+/g, "_")}_${type}.${fileExtension}`;
+
+      // Create new File object with the new name
+      const renamedFile = new File([file], newFileName, { type: file.type });
+
       // Use UploadThing to upload the file
       const { uploadFiles } = await import("@/lib/uploadthing");
 
       const result = await uploadFiles("imageUploader", {
-        files: [file],
+        files: [renamedFile],
       });
 
       if (result?.[0]) {
@@ -178,19 +195,49 @@ export function UploadPage() {
     }
   };
 
-  const startAnalysis = () => {
+  const startAnalysis = async () => {
     setCurrentStep(3);
 
-    // Simulate analysis progress
+    // Generate unique analysis ID
+    const analysisId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+    // Prepare data for the analysis agent
+    const buildingData = form.getValues();
+    const imageData = imagePairs
+      .filter((pair) => pair.status === "complete")
+      .map((pair) => ({
+        id: pair.id,
+        rgbUrl: pair.rgbUrl!,
+        thermalUrl: pair.thermalUrl!,
+        label: pair.label,
+      }));
+
+    // Store data in sessionStorage for the analysis page
+    sessionStorage.setItem(
+      `analysis-${analysisId}`,
+      JSON.stringify({
+        buildingInfo: buildingData,
+        imagePairs: imageData,
+      })
+    );
+
+    // Simulate brief preparation
     const interval = setInterval(() => {
       setUploadProgress((prev) => {
         if (prev >= 100) {
           clearInterval(interval);
+          // Navigate to analysis page
+          setTimeout(() => {
+            navigate({
+              to: "/analysis/$analysisId",
+              params: { analysisId },
+            });
+          }, 500);
           return 100;
         }
-        return prev + 10;
+        return prev + 20;
       });
-    }, 500);
+    }, 200);
   };
 
   return (
@@ -261,7 +308,7 @@ export function UploadPage() {
             >
               {currentStep > 3 ? <CheckCircle className="h-4 w-4" /> : "3"}
             </div>
-            <span className="text-sm font-medium">Analysis</span>
+            <span className="text-sm font-medium">Start Analysis</span>
           </div>
         </div>
       </div>
@@ -560,6 +607,7 @@ export function UploadPage() {
                 >
                   <Zap className="mr-2 h-4 w-4 group-hover:scale-110 transition-transform" />
                   Start AI Analysis
+                  <ArrowRight className="ml-2 h-4 w-4 group-hover:translate-x-1 transition-transform" />
                 </Button>
               </div>
 
@@ -577,22 +625,22 @@ export function UploadPage() {
         </div>
       )}
 
-      {/* Step 3: Analysis Progress */}
+      {/* Step 3: Analysis Preparation */}
       {currentStep === 3 && (
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Gauge className="h-5 w-5 text-primary animate-spin" />
-              Analysis in Progress
+              Preparing Analysis
             </CardTitle>
             <CardDescription>
-              Our AI is analyzing your thermal images and generating insights...
+              Setting up your thermal analysis session...
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
             <div className="space-y-2">
               <div className="flex justify-between text-sm">
-                <span>Progress</span>
+                <span>Preparing data...</span>
                 <span>{uploadProgress}%</span>
               </div>
               <Progress value={uploadProgress} className="h-2" />
@@ -605,17 +653,7 @@ export function UploadPage() {
                 </div>
                 <p className="text-sm font-medium">Processing Images</p>
                 <p className="text-xs text-muted-foreground">
-                  Analyzing thermal patterns
-                </p>
-              </div>
-
-              <div className="text-center space-y-2">
-                <div className="mx-auto w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
-                  <Zap className="h-6 w-6 text-primary" />
-                </div>
-                <p className="text-sm font-medium">AI Detection</p>
-                <p className="text-xs text-muted-foreground">
-                  Identifying anomalies
+                  Preparing {imagePairs.length} image pairs
                 </p>
               </div>
 
@@ -623,9 +661,19 @@ export function UploadPage() {
                 <div className="mx-auto w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
                   <Building2 className="h-6 w-6 text-primary" />
                 </div>
-                <p className="text-sm font-medium">Report Generation</p>
+                <p className="text-sm font-medium">Building Data</p>
                 <p className="text-xs text-muted-foreground">
-                  Creating recommendations
+                  Configuring analysis parameters
+                </p>
+              </div>
+
+              <div className="text-center space-y-2">
+                <div className="mx-auto w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
+                  <Zap className="h-6 w-6 text-primary" />
+                </div>
+                <p className="text-sm font-medium">AI Setup</p>
+                <p className="text-xs text-muted-foreground">
+                  Initializing analysis engine
                 </p>
               </div>
             </div>
@@ -634,7 +682,7 @@ export function UploadPage() {
               <Alert className="border-green-200 bg-green-50">
                 <CheckCircle className="h-4 w-4 text-green-600" />
                 <AlertDescription className="text-green-800">
-                  Analysis complete! Your thermal analysis report is ready.
+                  Redirecting to analysis page...
                 </AlertDescription>
               </Alert>
             )}
