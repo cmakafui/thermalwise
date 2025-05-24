@@ -1,8 +1,8 @@
-// src/components/layout/Header.tsx
+// src/components/layout/Header.tsx - Updated navigation
 import { useState, useEffect } from "react";
 import { Link, useRouterState } from "@tanstack/react-router";
 import { useTheme } from "@/components/providers/theme-provider";
-import { Menu, Home, Sun, Moon, Laptop, Shield } from "lucide-react";
+import { Menu, Home, Upload, Sun, Moon, Laptop, Shield } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -42,7 +42,8 @@ export function Header() {
   const isActive = (path: string) => currentPath === path;
 
   const navItems = [
-    { path: "/", icon: <Home className="h-4 w-4" />, label: "Dashboard" },
+    { path: "/", icon: <Home className="h-4 w-4" />, label: "Home" },
+    { path: "/upload", icon: <Upload className="h-4 w-4" />, label: "Upload" },
   ];
 
   return (
